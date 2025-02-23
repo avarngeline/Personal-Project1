@@ -1,0 +1,368 @@
+-- ** DATA CLEANING **
+
+-- See data structure
+SELECT *
+FROM layoffs;
+
+DESCRIBE layoffs;
+
+-- 1. Remove duplicates
+
+-- 1.1.Create staging table to back up raw data
+DROP TABLE layoffs_staging;
+CREATE TABLE layoffs_staging
+LIKE layoffs; 
+
+INSERT layoffs_staging
+SELECT *
+FROM layoffs;
+
+SELECT *
+FROM layoffs_staging; -- Staging table results
+
+-- 1.2. Use ROW_NUMBER() with PARTITION BY to identify duplicates
+-- If row_num > 1 means duplicates
+WITH duplicate_cte as
+(
+SELECT *,
+ROW_NUMBER() OVER(
+PARTITION BY company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions) AS row_num
+FROM layoffs_staging
+)
+SELECT *
+FROM duplicate_cte
+WHERE row_num >1
+;
+
+-- Remove duplicates by using ROW_NUMBER() (cannot delete directly as no unique identifier exists).
+
+DROP TABLE layoffs_staging2; -- Create a new table (layoffs_staging2) with an added row_num column.
+CREATE TABLE layoffs_staging2 
+LIKE layoffs_staging; 
+
+ALTER TABLE layoffs_staging2 
+ADD COLUMN row_num INT;
+
+SELECT *
+FROM layoffs_staging2;
+
+INSERT INTO layoffs_staging2 -- Insert data including row_num into the new table
+SELECT *,
+ROW_NUMBER() OVER(
+PARTITION BY company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions) AS row_num
+FROM layoffs_staging;
+
+DELETE -- Remove the duplicates
+FROM layoffs_staging2
+where row_num > 1;
+
+SELECT * -- Final results
+FROM layoffs_staging2
+WHERE row_num > 1;
+
+-- 2. Standardise data
+
+-- 2.1. Remove white space of company by using TRIM()
+SELECT company, trim(company)
+FROM layoffs_staging2;
+
+UPDATE layoffs_staging2
+SET company = trim(company);
+
+-- 2.2. Update the Crypto/Crypto Currency/CryptoCurrency industry to be consistently 'Crypto'
+SELECT DISTINCT industry -- Look for the industry started with the word Crypto...
+FROM layoffs_staging2
+WHERE industry LIKE 'Crypto%';
+
+UPDATE layoffs_staging2 -- Replace all Crypto% to Crypto
+SET industry = 'Crypto'
+WHERE industry LIKE 'Crypto%';
+
+-- 2.3. Update locations that shows differences; Dusseldorf, Florianopolis, Malmo
+SELECT DISTINCT location
+FROM layoffs_staging2
+ORDER BY location; 
+
+SELECT location -- Replace with Dusseldorf
+FROM layoffs_staging2
+WHERE location LIKE 'Dรผs%';
+
+UPDATE layoffs_staging2 
+SET location = 'Dusseldorf'
+WHERE location LIKE 'Dรผs%';
+
+SELECT location -- Replace with Florianopolis
+FROM layoffs_staging2
+WHERE location LIKE 'flori%';
+
+UPDATE layoffs_staging2 
+SET location = 'Florianopolis'
+WHERE location LIKE 'flori%';
+
+SELECT location -- Replace with Malmo
+FROM layoffs_staging2
+WHERE location LIKE 'Malm%';
+
+UPDATE layoffs_staging2 
+SET location = 'Malmo'
+WHERE location LIKE 'Malm%';
+
+-- 2.4. Update country United States.(with dot) to be consistently United States
+SELECT DISTINCT country
+FROM layoffs_staging2
+ORDER BY country;
+
+UPDATE layoffs_staging2 
+SET country = 'United States'
+WHERE country LIKE 'United States%';
+
+SELECT *
+FROM layoffs_staging2;
+
+-- 2.5. Format date to Year-Month-Date
+
+DESCRIBE layoffs_staging2;
+
+SELECT `date`,
+STR_TO_DATE(`date`, '%m/%d/%Y')
+FROM layoffs_staging2;
+
+UPDATE layoffs_staging2
+SET `date` = STR_TO_DATE(`date`, '%m/%d/%Y');
+
+ALTER TABLE layoffs_staging2 -- Change data type to Date
+MODIFY COLUMN `date` DATE;
+
+ALTER TABLE layoffs_staging2 -- Change data type to float
+MODIFY COLUMN percentage_laid_off FLOAT;
+
+DESCRIBE layoffs_staging2; -- Final results
+
+-- 3. Handle Null or blank values
+
+-- 3.1. Check the number of NULL values in each row and decide whether to remove or keep them
+
+SELECT
+    (COUNT(CASE WHEN company IS NULL THEN 1 END) / COUNT(*) * 100) AS com_null,
+    (COUNT(CASE WHEN location IS NULL THEN 1 END) / COUNT(*) * 100) AS loc_null,
+    (COUNT(CASE WHEN industry IS NULL THEN 1 END) / COUNT(*) * 100) AS ind_null,
+    (COUNT(CASE WHEN total_laid_off IS NULL THEN 1 END) / COUNT(*) * 100) AS total_laid_null,
+    (COUNT(CASE WHEN percentage_laid_off IS NULL THEN 1 END) / COUNT(*) * 100) AS pcent_laid_null,
+    (COUNT(CASE WHEN `date` IS NULL THEN 1 END) / COUNT(*) * 100) AS date_null,
+    (COUNT(CASE WHEN stage IS NULL THEN 1 END) / COUNT(*) * 100) AS stage_null,
+    (COUNT(CASE WHEN country IS NULL THEN 1 END) / COUNT(*) * 100) AS ctry_null,
+    (COUNT(CASE WHEN funds_raised_millions IS NULL THEN 1 END) / COUNT(*) * 100) AS fund_null
+FROM layoffs_staging2;
+
+-- 3.2. Fill in the NULL values with data that can be identified or populated based on available information
+
+SELECT * -- Fill in the missing industry for the company including Airbnb, Carvana, Bally%, Juul
+FROM layoffs_staging2
+WHERE industry IS NULL
+OR industry = '';
+
+SELECT * -- Industry of Airbnb = Travel
+FROM layoffs_staging2
+WHERE company = 'Airbnb'; 
+
+UPDATE layoffs_staging2
+SET industry = 'Travel'
+WHERE company = 'Airbnb';
+
+SELECT * -- Industry of Carvana = Transportation
+FROM layoffs_staging2
+WHERE company = 'Carvana'; 
+
+UPDATE layoffs_staging2
+SET industry = 'Transportation'
+WHERE company = 'Carvana';
+
+SELECT * -- Industry of Juul = Consumer
+FROM layoffs_staging2
+WHERE company = 'Juul'; 
+
+UPDATE layoffs_staging2
+SET industry = 'Consumer'
+WHERE company = 'Juul';
+
+SELECT * -- Since there were no other entries for the same company, the industry was filled in by searching on the internet as Other because Bally's Interactive is a gambling company (Source: www.ballys.com)
+FROM layoffs_staging2
+WHERE company LIKE 'Bally%'; 
+
+UPDATE layoffs_staging2
+SET industry = 'Other'
+WHERE company LIKE 'Bally%';
+
+UPDATE layoffs_staging2 -- Fill in the NULL or blank values with "Unknown", which is one of the entries in Advata, Gatherly, Relevel, Verily, Zapp.
+SET stage = 'Unknown'
+WHERE stage IS NULL;
+
+SELECT distinct stage
+FROM layoffs_staging2;
+
+SELECT * -- Since date is missing for Blackbaud, so it was filled in by searching on the internet as announcement date on 4 Nov 2022 (www.erpglobalinsights.com)
+FROM layoffs_staging2
+WHERE `date` IS NULL; 
+
+UPDATE layoffs_staging2
+SET `date` = '2022-11-04'
+WHERE `date` IS NULL;
+
+-- 3.3. Check data distribution by using AVG(), MIN(), MAX(), Mode, and Median to perform imputation
+
+select floor(avg(total_laid_off)), min(total_laid_off), max(total_laid_off) -- Check average, minimum, maximun value
+from layoffs_staging2;
+
+SELECT total_laid_off, COUNT(*) AS frequency -- Check mode value
+FROM layoffs_staging2
+WHERE total_laid_off IS NOT NULL
+GROUP BY total_laid_off
+ORDER BY frequency DESC
+LIMIT 5;
+
+SELECT COUNT(*) AS Total_row
+FROM layoffs_staging2;
+
+WITH numbered_rows AS ( -- Check Median value
+    SELECT total_laid_off, ROW_NUMBER() OVER (ORDER BY total_laid_off) AS row_num
+    FROM layoffs_staging2
+)
+SELECT total_laid_off AS Median
+FROM numbered_rows
+WHERE row_num = (
+	SELECT FLOOR(COUNT(*) / 2) + 1
+    FROM numbered_rows)
+; 
+
+-- 3.4. Perform imputation in total_laid_off using median values (40) to avoid being influenced by outliers
+
+UPDATE layoffs_staging2
+SET total_laid_off = 40
+WHERE total_laid_off IS NULL;
+
+SELECT *
+FROM layoffs_staging2;
+
+-- 3.5. -- Drop the row with both total_laid_off and percentage_laid_off are nulls as they are the main information
+
+DELETE 
+FROM layoffs_staging2
+WHERE total_laid_off IS NULL
+AND percentage_laid_off IS NULL;
+
+SELECT *
+FROM layoffs_staging2;
+
+
+-- However, percentage_laid_off will not be populated due to insufficient data and its lack of meaning, so these will be left for exploration during the EDA phase
+
+-- 4. Remove unnecessary columns
+SELECT * 
+FROM layoffs_staging2;
+
+-- 4.1. Drop row_num as it is not used anymore
+ALTER TABLE layoffs_staging2
+DROP COLUMN row_num;
+
+-- ** Exploratory Data Analysis (EDA) **
+-- 1. Basic Descriptive Statistics
+SELECT * 
+FROM layoffs_staging2;
+
+-- How many companies have reported layoffs and the total number of layoffs?
+SELECT COUNT(DISTINCT company) AS Total_Company, SUM(total_laid_off) AS Total_Laid_Off
+FROM layoffs_staging2;
+
+-- What is the highest number of total layoffs and the highest percentage of layoffs?
+SELECT max(total_laid_off) AS Max_Laid_Off, max(percentage_laid_off) AS Max_Percent_Laid_off
+FROM layoffs_staging2;
+
+SELECT * -- -- Drilling down to see which company has the highest percentage
+FROM layoffs_staging2
+WHERE percentage_laid_off = 1
+ORDER BY total_laid_off DESC;
+
+-- Which industry had the highest number of total layoffs?
+SELECT industry, COUNT(DISTINCT company), SUM(total_laid_off)
+FROM layoffs_staging2
+GROUP BY industry
+ORDER BY 3 DESC;
+
+-- Which country had the highest number of total layoffs?
+SELECT country, sum(total_laid_off) 
+FROM layoffs_staging2
+GROUP BY country
+ORDER BY 2 DESC;
+
+-- Which company had the highest number of total layoffs?
+SELECT company, sum(total_laid_off)
+FROM layoffs_staging2
+GROUP BY company
+ORDER BY 2 DESC;
+
+-- Which company has reported layoffs more than once?
+SELECT company, count(company)
+FROM layoffs_staging2
+GROUP BY company
+ORDER BY 2 desc;
+
+-- What is the date range for massive layoffs?
+SELECT min(`date`), max(`date`) 
+FROM layoffs_staging2;
+
+-- Which year had the highest total number of layoffs?
+SELECT YEAR(`date`) AS Year, sum(total_laid_off) As Total_layoffs
+FROM layoffs_staging2
+GROUP BY YEAR(`date`)
+ORDER BY 2 desc;
+
+-- The total layoffs per stage (If the stage with the highest layoffs also has the most companies)
+SELECT stage, COUNT(DISTINCT company), SUM(total_laid_off) 
+FROM layoffs_staging2
+GROUP BY stage
+ORDER BY 2 DESC;
+
+-- 2. Layoff Trends Over Time
+-- 2.1. Total layoffs each year by month
+SELECT substring(`date`,1,7) AS `MONTH`, sum(total_laid_off)
+FROM layoffs_staging2
+WHERE substring(`date`,1,7) IS NOT NULL
+GROUP BY `MONTH`
+ORDER BY 1;
+
+-- 2.2. Rolling sum of layoffs based on month
+WITH rolling_total AS
+(
+SELECT substring(`date`,1,7) AS `MONTH`, sum(total_laid_off) AS total_off
+FROM layoffs_staging2
+WHERE substring(`date`,1,7) IS NOT NULL
+GROUP BY `MONTH`
+ORDER BY 1
+)
+SELECT `MONTH`, total_off,
+sum(total_off) OVER(ORDER BY `MONTH`) AS Rolling_Sum
+FROM rolling_total
+;
+
+-- 2.3. Select company by the year people get laid off
+SELECT company, YEAR(`date`), sum(total_laid_off) 
+FROM layoffs_staging2
+GROUP BY company, YEAR(`date`)
+ORDER BY 3 DESC;
+
+-- 2.4. Which company had the highest number of layoffs in a particular year?
+
+WITH company_year (company, years, total_laid_off) AS
+(
+SELECT company, YEAR(`date`), sum(total_laid_off)
+FROM layoffs_staging2
+GROUP BY company, YEAR(`date`)
+), Company_Year_RANK AS
+(SELECT *, DENSE_RANK() OVER (PARTITION BY years ORDER BY total_laid_off DESC) AS Ranking
+FROM company_year
+WHERE years IS NOT NULL
+)
+SELECT *
+FROM Company_Year_RANK
+WHERE Ranking <= 5
+;
