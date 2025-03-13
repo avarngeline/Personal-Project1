@@ -1,5 +1,5 @@
 
-## Data Cleaning and Exploratory Data Analysis (EDA) Using MySQL
+## Analysis of Layoff Trends: Data Cleaning and Exploratory Data Analysis (EDA) Using MySQL
 
 ## Executive Summary
 This project analyses global layoffs from March 2020 to March 2023, with a primary focus on the impact of the COVID-19 pandemic across various industries. The dataset, encompassing over 1,800 companies, provides crucial insights into the number of employees laid off, the percentage affected, the companies' stages of development, and their financial status.
